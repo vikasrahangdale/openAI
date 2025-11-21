@@ -10,7 +10,7 @@ class GeminiService {
   async sendMessage(message) {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash", // Fixed model name
       });
 
       const result = await model.generateContent({
@@ -26,7 +26,7 @@ class GeminiService {
       const text =
         result?.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
         result?.response?.candidates?.[0]?.content?.parts?.[0] ||
-        result?.response?.text ||
+        result?.response?.text() ||
         result?.text ||
         result?.response ||
         "No response found";
@@ -43,7 +43,7 @@ class GeminiService {
       console.log("🔍 Analyzing tender document for specifications...");
 
       const model = this.genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash", // Fixed model name
       });
 
       const prompt = `
@@ -75,13 +75,16 @@ class GeminiService {
         At the end add: "Reply YES if you want me to generate a PDF."
       `;
 
+      // Proper base64 conversion
+      const base64Data = this.getBase64Data(fileBuffer);
+
       const result = await model.generateContent({
         contents: [
           {
             parts: [
               {
                 inlineData: {
-                  data: fileBuffer.toString("base64"),
+                  data: base64Data,
                   mimeType: mimeType,
                 },
               },
@@ -92,6 +95,7 @@ class GeminiService {
       });
 
       const text = result?.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+                   result?.response?.text() ||
                    "No response from Gemini";
 
       console.log("✅ Technical specifications extracted");
@@ -104,6 +108,138 @@ class GeminiService {
     } catch (err) {
       console.error("❌ Analysis Error:", err);
       return "Error analyzing specifications: " + err.message;
+    }
+  }
+
+  async processFileWithMessage(fileBuffer, mimeType, fileName, userMessage) {
+    try {
+      const model = this.genAI.getGenerativeModel({
+        model: "gemini-2.5-flash", // Fixed model name
+      });
+
+      const prompt = `
+Extract the following information CLEANLY from the attached document.
+Write ONLY the requested sections in exact block format below.
+
+1. Institute Name
+2. Address & Contact Details
+3. Document/Tender Date
+4. All Requirements / Specifications
+
+Return EXACTLY in this format:
+
+--- INSTITUTE_START ---
+[Institute Name]
+[Department, if present]
+--- INSTITUTE_END ---
+
+--- CONTACT_START ---
+Address: [Full Address]
+Email: [Email]
+Phone: [Phone Numbers]
+Website: [Website]
+--- CONTACT_END ---
+
+--- DATE_START ---
+[Document/Tender Date]
+--- DATE_END ---
+
+--- REQUIREMENTS_START ---
+[List every requirement/specification clearly, one per line]
+--- REQUIREMENTS_END ---
+
+Do NOT add anything outside these blocks.
+If any field is missing in document, write "Not found".
+`;
+
+      // Proper base64 conversion
+      const base64Data = this.getBase64Data(fileBuffer);
+
+      console.log(`📄 Processing file: ${fileName}, Type: ${mimeType}, Size: ${base64Data.length} chars`);
+
+      const result = await model.generateContent({
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  data: base64Data,
+                  mimeType: mimeType,
+                },
+              },
+              { text: prompt },
+            ],
+          },
+        ],
+      });
+
+      const text =
+        result?.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        result?.response?.text() ||
+        "AI response missing";
+
+      console.log("✅ File processed successfully");
+      return text;
+
+    } catch (err) {
+      console.error("❌ Error in processFileWithMessage:", err);
+      
+      // Return structured fallback response
+      return `--- INSTITUTE_START ---
+Not found
+--- INSTITUTE_END ---
+
+--- CONTACT_START ---
+Not found
+--- CONTACT_END ---
+
+--- DATE_START ---
+Not found
+--- DATE_END ---
+
+--- REQUIREMENTS_START ---
+Error processing document: ${err.message}
+Please try again with a different file or check the file format.
+--- REQUIREMENTS_END ---`;
+    }
+  }
+
+  // New method to handle file processing with the expected name
+  async processFile(file, message = "") {
+    try {
+      console.log(`📄 Processing file: ${file.originalname}, Type: ${file.mimetype}`);
+      
+      // Use the existing processFileWithMessage method
+      return await this.processFileWithMessage(
+        file.buffer,
+        file.mimetype,
+        file.originalname,
+        message || "Extract technical specifications from this document"
+      );
+    } catch (error) {
+      console.error("❌ File processing error:", error);
+      throw new Error(`File processing failed: ${error.message}`);
+    }
+  }
+
+  // Helper method to properly convert buffer to base64
+  getBase64Data(fileBuffer) {
+    try {
+      if (fileBuffer instanceof Buffer) {
+        return fileBuffer.toString('base64');
+      } else if (fileBuffer.data) {
+        // If it's already a base64 object
+        return fileBuffer.data.toString('base64');
+      } else if (fileBuffer.buffer) {
+        // If it has a buffer property
+        return fileBuffer.buffer.toString('base64');
+      } else {
+        // Convert to buffer first
+        return Buffer.from(fileBuffer).toString('base64');
+      }
+    } catch (error) {
+      console.error("❌ Error converting to base64:", error);
+      throw new Error("Invalid file buffer format");
     }
   }
 
